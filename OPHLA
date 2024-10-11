@@ -1,0 +1,58 @@
+import numpy as np
+import pandas as pd
+from sklearn.datasets import load_iris, make_classification
+from sklearn.model_selection import train_test_split, GridSearchCV
+from sklearn.tree import DecisionTreeClassifier
+from sklearn.ensemble import RandomForestClassifier, GradientBoostingClassifier
+from sklearn.svm import SVC
+from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score
+
+# Load example dataset (replace this with your dataset loading)
+# If using a real dataset:
+# data = pd.read_csv('path_to_your_data.csv')
+# X = data[['feature1', 'feature2', ...]]
+# y = data['target_column']
+
+
+data = pd.read_csv('D:/data.csv')
+# X = data[['features']]  # Replace 'features' with your dataset features
+# y = data['target']  # Replace 'target' with your target column
+X = data[["Theoretical pI", "Molecular weight"]]
+Y = data["Target"]
+
+
+# Split data into training and testing sets with a specified test ratio
+X_train, X_test, Y_train, Y_test = train_test_split(X, Y, test_size=0.2, random_state=100)
+
+# Define classifiers
+dt = DecisionTreeClassifier(criterion='gini', random_state=100)
+rf = RandomForestClassifier(n_estimators=100, random_state=100)
+svm = SVC(kernel='rbf', probability=True, random_state=100)  # enable probability for SVM
+gb = GradientBoostingClassifier(learning_rate=0.1, n_estimators=100, random_state=100)
+
+# Train classifiers
+dt.fit(X_train, Y_train)
+rf.fit(X_train, Y_train)
+svm.fit(X_train, Y_train)
+gb.fit(X_train, Y_train)
+
+# Make predictions
+dt_pred = dt.predict(X_test)
+rf_pred = rf.predict(X_test)
+svm_pred = svm.predict(X_test)
+gb_pred = gb.predict(X_test)
+
+# Combining predictions - Majority Voting
+predictions = np.array([dt_pred, rf_pred, svm_pred, gb_pred])
+final_pred = np.apply_along_axis(lambda x: np.bincount(x, minlength=len(set(Y_train))).argmax(), axis=0, arr=predictions)
+
+# Evaluate model performance
+accuracy = accuracy_score(Y_test, final_pred)
+precision = precision_score(Y_test, final_pred, average='weighted')  # Use 'weighted' for imbalanced classes
+recall = recall_score(Y_test, final_pred, average='weighted')  # Use 'weighted' for imbalanced classes
+f1 = f1_score(Y_test, final_pred, average='weighted')  # Use 'weighted' for imbalanced classes
+
+print("Hybrid Model Accuracy:", accuracy)
+print("Precision:", precision)
+print("Recall:", recall)
+print("F1 Score:", f1)
