@@ -1,0 +1,98 @@
+import tensorflow as tf
+from tensorflow.keras.preprocessing.image import ImageDataGenerator
+from tensorflow.keras.layers import Input, Conv2D, AveragePooling2D, Flatten, Dense, BatchNormalization, ReLU, GlobalAveragePooling2D, Add, Dropout
+from tensorflow.keras.models import Model
+from tensorflow.keras.optimizers import Adam
+from tensorflow.keras.callbacks import LearningRateScheduler
+
+def residual_block(x, filters, kernel_size=3, stride=1, dropout_rate=0.3):
+    shortcut = x
+    x = Conv2D(filters, kernel_size=kernel_size, strides=stride, padding='same')(x)
+    x = BatchNormalization()(x)
+    x = ReLU()(x)
+    x = Dropout(dropout_rate)(x)
+    x = Conv2D(filters, kernel_size=kernel_size, strides=stride, padding='same')(x)
+    x = BatchNormalization()(x)
+    x = Add()([x, shortcut])
+    x = ReLU()(x)
+    return x
+
+def inception_block(x, filter_channels):
+    path1 = Conv2D(filter_channels // 4, (1, 1), padding='same', activation='relu')(x)
+    path2 = Conv2D(filter_channels // 4, (3, 3), padding='same', activation='relu')(x)
+    path3 = Conv2D(filter_channels // 4, (5, 5), padding='same', activation='relu')(x)
+    path4 = AveragePooling2D((3, 3), strides=(1, 1), padding='same')(x)
+    path4 = Conv2D(filter_channels // 4, (1, 1), padding='same', activation='relu')(path4)
+    return tf.keras.layers.Concatenate()([path1, path2, path3, path4])
+
+def scheduler(epoch, lr):
+    if epoch < 5:
+        return lr
+    else:
+        return lr * tf.math.exp(-0.1)
+
+inputs = Input(shape=(299, 299, 3))
+x = Conv2D(128, (7, 7), strides=(2, 2), padding='same')(inputs)
+x = BatchNormalization()(x)
+x = ReLU()(x)
+x = AveragePooling2D((3, 3), strides=(2, 2), padding='same')(x)
+x = residual_block(x, 128, dropout_rate=0.4)
+x = residual_block(x, 128, dropout_rate=0.4)
+x = inception_block(x, 256)
+x = residual_block(x, 256, dropout_rate=0.4)
+x = residual_block(x, 256, dropout_rate=0.4)
+x = inception_block(x, 512)
+x = GlobalAveragePooling2D()(x)
+x = Dropout(0.5)(x)
+x = Dense(512, activation='relu')(x)
+outputs = Dense(9, activation='softmax')(x)  # Assuming 9 classes here
+
+model = Model(inputs=inputs, outputs=outputs)
+model.compile(optimizer=Adam(learning_rate=0.0001), loss='categorical_crossentropy', metrics=['accuracy'])
+
+# Data augmentation setup
+train_datagen = ImageDataGenerator(
+    rescale=1./255,
+    validation_split=0.2,
+    rotation_range=50,
+    width_shift_range=0.3,
+    height_shift_range=0.3,
+    shear_range=0.2,
+    zoom_range=0.3,
+    horizontal_flip=True,
+    fill_mode='nearest'
+)
+
+data_dir = 'D:/cancer/image/data'
+train_generator = train_datagen.flow_from_directory(
+    data_dir,
+    target_size=(299, 299),
+    batch_size=64,
+    class_mode='categorical',
+    subset='training'
+)
+
+validation_generator = train_datagen.flow_from_directory(
+    data_dir,
+    target_size=(299, 299),
+    batch_size=64,
+    class_mode='categorical',
+    subset='validation'
+)
+
+# Callback for learning rate scheduling
+lr_scheduler = LearningRateScheduler(scheduler)
+
+# Training the model
+history = model.fit(
+    train_generator,
+    steps_per_epoch=train_generator.samples // 64,
+    validation_data=validation_generator,
+    validation_steps=validation_generator.samples // 64,
+    epochs=20,
+    callbacks=[lr_scheduler]
+)
+
+# Evaluate the model
+_, accuracy = model.evaluate(validation_generator, steps=validation_generator.samples // 64)
+print(f"Validation Accuracy: {accuracy * 100:.2f}%")
