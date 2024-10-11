@@ -1,0 +1,135 @@
+import cv2
+import tensorflow as tf
+import tensorflow_hub as hub
+from tensorflow.keras import layers, models, callbacks
+import pandas as pd
+from tensorflow.keras.callbacks import TensorBoard
+import datetime
+import numpy as np
+def create_lighter_emotion_detection_model(input_shape, num_classes):
+    base_model = tf.keras.applications.MobileNetV2(include_top=False, input_shape=input_shape, weights='imagenet')
+    base_model.trainable = False
+    model = models.Sequential([
+        base_model,
+        layers.GlobalAveragePooling2D(),
+        layers.Dense(64, activation='relu'),
+        layers.Dropout(0.3),
+        layers.Dense(num_classes, activation='softmax', dtype='float32')
+    ])
+    model.compile(optimizer='adam', loss='categorical_crossentropy', metrics=['accuracy'])
+    return model
+
+def load_image(file_path):
+    img = tf.io.decode_jpeg(tf.io.read_file(file_path), channels=3)
+    img = tf.image.resize(img, [224, 224])
+    img = img / 255.0  # Normalize to [0, 1]
+    return img
+
+def load_dataset(csv_file):
+    df = pd.read_csv(csv_file)
+    file_paths = df['file_path'].values
+    labels = pd.get_dummies(df['label']).values  # One-hot encode labels
+
+    path_ds = tf.data.Dataset.from_tensor_slices(file_paths)
+    labels_ds = tf.data.Dataset.from_tensor_slices(labels)
+    image_ds = path_ds.map(load_image, num_parallel_calls=tf.data.AUTOTUNE)
+    dataset = tf.data.Dataset.zip((image_ds, labels_ds))
+    dataset = dataset.shuffle(buffer_size=1000).batch(32).prefetch(tf.data.AUTOTUNE)
+    return dataset
+
+def detect_faces(image):
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+    faces = face_cascade.detectMultiScale(gray, scaleFactor=1.1, minNeighbors=5)
+    return faces
+
+def classify_emotion(face_image, model):
+    resized_face = cv2.resize(face_image, (224, 224))  # Assuming MobileNet input size
+    normalized_face = resized_face / 255.0
+    normalized_face = np.expand_dims(normalized_face, axis=0)
+    emotion_prediction = model.predict(normalized_face)
+    return np.argmax(emotion_prediction)
+
+def detect_pose(image, posenet_model):
+    input_image = tf.image.resize_with_pad(np.expand_dims(image, axis=0), 257, 257)
+    input_image = tf.cast(input_image, dtype=tf.int32)
+    outputs = posenet_model(input_image)
+    return outputs['output_0'].numpy()
+
+if _name_ == "_main_":
+    # File paths for the CSVs
+    train_csv = 'annotations.csv'
+    val_csv = 'Vannotations.csv'
+    test_csv = 'tannotations.csv'
+
+    # Load datasets
+    train_dataset = load_dataset(train_csv)
+    val_dataset = load_dataset(val_csv)
+    test_dataset = load_dataset(test_csv)
+
+    # Number of classes, adjust according to your dataset
+    num_classes = train_dataset.element_spec[1].shape[1]
+    print("Detected number of classes:", num_classes)
+
+    # Load Haar Cascade for face detection
+    face_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
+
+    # Load pre-trained PoseNet model from TensorFlow Hub
+    posenet_model = hub.load('https://tfhub.dev/google/posenet/1')
+
+    # Create and compile the emotion detection model
+    emotion_model = create_lighter_emotion_detection_model(input_shape=(224, 224, 3), num_classes=num_classes)
+
+    # Setup checkpointing
+    checkpoint_callback = callbacks.ModelCheckpoint(
+        'best_model.keras',
+        monitor='val_accuracy',
+        save_best_only=True,
+        verbose=1
+    )
+
+    # Set up TensorBoard logging
+    log_dir = "logs/fit/" + datetime.datetime.now().strftime("%Y%m%d-%H%M%S")
+    tensorboard_callback = TensorBoard(log_dir=log_dir, histogram_freq=1)
+
+    # Train the model
+    history = emotion_model.fit(
+        train_dataset, 
+        epochs=10, 
+        validation_data=val_dataset, 
+        callbacks=[checkpoint_callback, tensorboard_callback]
+    )
+
+    # Load the best model weights
+    emotion_model.load_weights('best_model.keras')
+
+    # Evaluate the model
+    loss, accuracy = emotion_model.evaluate(test_dataset)
+    print(f"Test Loss: {loss}, Test Accuracy: {accuracy}")
+
+    # Save the final model
+    emotion_model.save('final_emotion_detection_model.keras')
+
+    # Example usage for a single image
+    image_path = 'path_to_image.jpg'
+    image = cv2.imread(image_path)
+
+    # Detect faces
+    faces = detect_faces(image)
+    for (x, y, w, h) in faces:
+        face_image = image[y:y+h, x:x+w]
+        emotion = classify_emotion(face_image, emotion_model)
+        # Draw rectangle around the face and label emotion
+        cv2.rectangle(image, (x, y), (x+w, y+h), (255, 0, 0), 2)
+        cv2.putText(image, str(emotion), (x, y-10), cv2.FONT_HERSHEY_SIMPLEX, 0.9, (255, 0, 0), 2)
+
+    # Detect pose
+    keypoints = detect_pose(image, posenet_model)
+    # Draw keypoints on the image
+    for keypoint in keypoints[0]:
+        y, x, c = keypoint
+        if c > 0.5:  # Confidence threshold
+            cv2.circle(image, (int(x), int(y)), 5, (0, 255, 0), -1)
+
+    cv2.imshow('Output', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
