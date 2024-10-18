@@ -1,0 +1,80 @@
+import cv2
+import numpy as np
+
+# List of image paths
+image_paths = []
+# Define the scale factor (pixels per millimeter)
+pixels_per_mm = 10  # Example value, adjust this based on your scale
+
+for image_path in image_paths:
+    # Load the image
+    image = cv2.imread(image_path)
+
+    # Lists to store measurements for each image
+    lengths_mm = []
+    widths_mm = []
+    areas_m2 = []  # Storing areas in square meters
+
+    # Check if the image was correctly loaded
+    if image is None:
+        print(f"Error: Image not found at {image_path}.")
+        continue
+
+    # Reduce the resolution of the image by a third
+    new_width = image.shape[1] // 3
+    new_height = image.shape[0] // 3
+    image = cv2.resize(image, (new_width, new_height), interpolation=cv2.INTER_LINEAR)
+
+    # Convert the image to grayscale
+    gray = cv2.cvtColor(image, cv2.COLOR_BGR2GRAY)
+
+    # Threshold the image to get the contours
+    _, thresh = cv2.threshold(gray, 128, 255, cv2.THRESH_BINARY)
+
+    # Find contours
+    contours, _ = cv2.findContours(thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE)
+
+    # Iterate over contours to find the dimensions and area
+    for contour in contours:
+        if cv2.contourArea(contour) < 100:
+            continue
+
+        area_pixels = cv2.contourArea(contour)
+        rect = cv2.minAreaRect(contour)
+        box = cv2.boxPoints(rect)
+        box = np.int0(box)
+
+        if any(point[1] >= new_height - 1 for point in box):
+            continue
+
+        cv2.drawContours(image, [box], 0, (0, 255, 0), 2)
+
+        width_pixels = rect[1][0]
+        length_pixels = rect[1][1]
+        length_pixels, width_pixels = max(length_pixels, width_pixels), min(length_pixels, width_pixels)
+
+        length_mm = length_pixels / pixels_per_mm
+        width_mm = width_pixels / pixels_per_mm
+        area_m2 = (area_pixels / (pixels_per_mm ** 2)) * 1e-6  # Convert area to square meters
+
+        # Append measurements to lists
+        lengths_mm.append(length_mm)
+        widths_mm.append(width_mm)
+        areas_m2.append(area_m2)
+
+        print(f"Image: {image_path}, Object Length: {length_mm:.2f} mm, Object Width: {width_mm:.2f} mm, Area: {area_m2:.6f} m²")
+
+    # Calculate and print mean and standard deviation for each image
+    if lengths_mm:
+        print(f"Image: {image_path}, Mean Length: {np.mean(lengths_mm):.2f} mm, Standard Deviation: {np.std(lengths_mm):.2f}")
+        print(f"Image: {image_path}, Mean Width: {np.mean(widths_mm):.2f} mm, Standard Deviation: {np.std(widths_mm):.2f}")
+        print(f"Image: {image_path}, Mean Area: {np.mean(areas_m2):.6f} m², Standard Deviation: {np.std(areas_m2):.6f}")
+
+    # Save the image with objects highlighted
+    output_path = image_path.replace('.jpg', '_detected_objects_with_rotated_box.png')
+    cv2.imwrite(output_path, image)
+
+    # Display the result
+    cv2.imshow(f'Detected Objects in {image_path}', image)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
